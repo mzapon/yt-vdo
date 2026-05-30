@@ -2,9 +2,8 @@ name: 24/7 YouTube to YouTube Live
 
 on:
   schedule:
-    # প্রতি ৫ ঘণ্টা পর পর এটি অটো-রিস্টার্ট হবে (৬ ঘণ্টার ডেডলাইনের অনেক আগেই)
     - cron: '0 */5 * * *'
-  workflow_dispatch: # ম্যানুয়ালি চালু করার বাটন
+  workflow_dispatch:
 
 jobs:
   live_stream:
@@ -18,6 +17,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg
+        # লেটেস্ট yt-dlp ডাউনলোড নিশ্চিত করা
         sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
         sudo chmod a+rx /usr/local/bin/yt-dlp
 
@@ -28,47 +28,43 @@ jobs:
       run: |
         echo "Starting stable and resilient 24/7 live stream..."
         
-        # সেফটি চেক: গিটহাব সিক্রেট ঠিকমতো লোড হয়েছে কিনা
         if [ -z "$MY_STREAM_KEY" ]; then
-          echo "❌ ERROR: MY_STREAM_KEY is missing in GitHub Secrets!"
-          echo "Please go to Settings -> Secrets and variables -> Actions and add MY_STREAM_KEY."
+          echo "❌ ERROR: MY_STREAM_KEY is missing!"
           exit 1
         fi
         
-        RETRY_DELAY=10
+        RETRY_DELAY=15
         MAX_RETRIES=30
         RETRY_COUNT=0
         
         while true; do
-          VIDEO_URL=$(yt-dlp -g -f "bestvideo[ext=mp4]/bestvideo" "$SOURCE_YOUTUBE_URL" 2>/dev/null)
-          AUDIO_URL=$(yt-dlp -g -f "bestaudio[ext=m4a]/bestaudio" "$SOURCE_YOUTUBE_URL" 2>/dev/null)
+          echo "🔄 Fetching stream URLs via yt-dlp (Printing errors if any)..."
+          
+          # আসল এরর দেখতে দেওয়ার জন্য 2>/dev/null সরিয়ে দেওয়া হলো
+          # এবং ইউটিউবের ব্লক এড়াতে ইউজার-এজেন্ট ফ্ল্যাগ যোগ করা হয়েছে
+          VIDEO_URL=$(yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" -g -f "bestvideo[ext=mp4]/bestvideo" "$SOURCE_YOUTUBE_URL" || echo "")
+          AUDIO_URL=$(yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" -g -f "bestaudio[ext=m4a]/bestaudio" "$SOURCE_YOUTUBE_URL" || echo "")
           
           if [ -z "$VIDEO_URL" ] || [ -z "$AUDIO_URL" ]; then
             RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "Attempt $RETRY_COUNT/$MAX_RETRIES: Failed to fetch stream URLs. Retrying in $RETRY_DELAY seconds..."
+            echo "⚠️ Attempt $RETRY_COUNT/$MAX_RETRIES: Link fetch failed. Retrying in $RETRY_DELAY seconds..."
             
             if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-              echo "Max retries reached. Exiting workflow to save GitHub minutes."
+              echo "❌ Max retries reached. Exiting workflow."
               exit 1
             fi
             
             sleep $RETRY_DELAY
-            [ $RETRY_DELAY -lt 60 ] && RETRY_DELAY=$((RETRY_DELAY + 10))
             continue
           fi
           
-          # রিট্রাই কাউন্ট রিসেট (সফল হলে)
           RETRY_COUNT=0
-          RETRY_DELAY=10
-          
-          echo "🚀 Starting ffmpeg with separate Video and Audio inputs via explicit mapping..."
+          echo "🚀 Starting ffmpeg stream..."
           ffmpeg -re -i "$VIDEO_URL" -re -i "$AUDIO_URL" \
             -map 0:v:0 -map 1:a:0 \
             -c:v copy -c:a aac -b:a 128k -ar 44100 \
             -f flv -flvflags no_duration_filesize \
-            "rtmp://a.rtmp.youtube.com/live2/$MY_STREAM_KEY" || echo "⚠️ FFmpeg process exited or completed."
+            "rtmp://a.rtmp.youtube.com/live2/$MY_STREAM_KEY" || echo "⚠️ FFmpeg exited."
           
-          echo "Stream disconnected. Retrying in $RETRY_DELAY seconds..."
-          sleep $RETRY_DELAY
-          [ $RETRY_DELAY -lt 60 ] && RETRY_DELAY=$((RETRY_DELAY + 10))
+          sleep 5
         done
