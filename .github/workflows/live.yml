@@ -2,7 +2,7 @@ name: 24/7 Dropbox to YouTube Live
 
 on:
   schedule:
-    - cron: '0 */4 * * *'  # প্রতি ৪ ঘণ্টায় রিস্টার্ট
+    - cron: '0 */4 * * *'  # প্রতি ৪ ঘণ্টায় অটো-রিস্টার্ট
   workflow_dispatch:
 
 jobs:
@@ -25,14 +25,15 @@ jobs:
         MY_STREAM_KEY: ${{ secrets.MY_STREAM_KEY }}
       run: |
         if [ -z "$MY_STREAM_KEY" ]; then
-          echo "❌ ERROR: MY_STREAM_KEY is missing!"
+          echo "❌ ERROR: MY_STREAM_KEY is missing in GitHub Secrets!"
           exit 1
         fi
 
         RETRY_DELAY=15
         while true; do
-          echo "🚀 Starting stream..."
+          echo "🚀 Starting stream from Dropbox..."
 
+          # এখানে শেষে '|| true' যুক্ত করা হয়েছে যেন ভিডিও শেষ হলেও লুপ ভেঙে না যায়
           ffmpeg -re \
             -reconnect 1 \
             -reconnect_streamed 1 \
@@ -42,9 +43,9 @@ jobs:
             -c:a aac -b:a 128k -ar 44100 \
             -af aresample=async=1 \
             -f flv \
-            "rtmp://a.rtmp.youtube.com/live2/$MY_STREAM_KEY"
+            "rtmp://a.rtmp.youtube.com/live2/$MY_STREAM_KEY" || true
 
           EXIT_CODE=$?
-          echo "⚠️ FFmpeg exited (code: $EXIT_CODE). Retrying in $RETRY_DELAY seconds..."
+          echo "⚠️ FFmpeg exited (code: $EXIT_CODE). Re-connecting in $RETRY_DELAY seconds..."
           sleep $RETRY_DELAY
         done
