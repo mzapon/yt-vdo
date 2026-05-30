@@ -1,9 +1,9 @@
-name: 24/7 YouTube to YouTube Live
+name: 24/7 Dropbox to YouTube Live
 
 on:
   schedule:
-    - cron: '0 */5 * * *'
-  workflow_dispatch:
+    - cron: '0 */5 * * *' # প্রতি ৫ ঘণ্টা পর পর অটো-রিস্টার্ট হবে
+  workflow_dispatch: # ম্যানুয়ালি চালু করার বাটন
 
 jobs:
   live_stream:
@@ -13,62 +13,34 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # ইউটিউবের JS runtime ওয়ার্নিং দূর করার জন্য Node.js সেটআপ
-    - name: Setup Node.js (JS Runtime)
-      uses: actions/setup-node@v4
-      with:
-        node-version: 20
-
-    - name: Install FFmpeg and yt-dlp
+    - name: Install FFmpeg
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg
-        sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
-        sudo chmod a+rx /usr/local/bin/yt-dlp
 
     - name: Start Live Stream
       env:
-        SOURCE_YOUTUBE_URL: "https://www.youtube.com/watch?v=kSUjZBv5wXg"
+        # আপনার দেওয়া ড্রপবক্স লিঙ্কটি এখানে raw=1 ফরম্যাটে সেট করা হয়েছে
+        DROPBOX_VIDEO_URL: "https://www.dropbox.com/scl/fi/hdw1zh2u60id9rl8odh7y/videoplayback.mp4?rlkey=lpuhi5raoppc1p0ty7hj73wng&st=ehvvf62r&raw=1"
         MY_STREAM_KEY: ${{ secrets.MY_STREAM_KEY }}
       run: |
-        echo "Starting stable and resilient 24/7 live stream..."
+        echo "Starting stable and resilient 24/7 live stream from Dropbox..."
         
         if [ -z "$MY_STREAM_KEY" ]; then
-          echo "❌ ERROR: MY_STREAM_KEY is missing!"
+          echo "❌ ERROR: MY_STREAM_KEY is missing in GitHub Secrets!"
           exit 1
         fi
         
         RETRY_DELAY=15
-        MAX_RETRIES=30
-        RETRY_COUNT=0
-        
         while true; do
-          echo "🔄 Fetching stream URLs via yt-dlp (Using Browser Client Emulation)..."
+          echo "🚀 Starting ffmpeg stream from cloud storage..."
           
-          # --extractor-args দিয়ে ইউটিউবকে ধোঁকা দেওয়ার জন্য 'web' এবং 'android' ক্লায়েন্ট এমুলেশন ব্যবহার করা হয়েছে
-          VIDEO_URL=$(yt-dlp --extractor-args "youtube:player_client=web,android" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -g -f "bestvideo[ext=mp4]/bestvideo" "$SOURCE_YOUTUBE_URL" 2>/dev/null || echo "")
-          AUDIO_URL=$(yt-dlp --extractor-args "youtube:player_client=web,android" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -g -f "bestaudio[ext=m4a]/bestaudio" "$SOURCE_YOUTUBE_URL" 2>/dev/null || echo "")
-          
-          if [ -z "$VIDEO_URL" ] || [ -z "$AUDIO_URL" ]; then
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "⚠️ Attempt $RETRY_COUNT/$MAX_RETRIES: YouTube still blocking with bot check. Retrying in $RETRY_DELAY seconds..."
-            
-            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-              echo "❌ Max retries reached. YouTube block is too strong on this GitHub IP."
-              exit 1
-            fi
-            
-            sleep $RETRY_DELAY
-            continue
-          fi
-          
-          RETRY_COUNT=0
-          echo "🚀 Success! URLs fetched. Starting ffmpeg stream..."
-          ffmpeg -re -i "$VIDEO_URL" -re -i "$AUDIO_URL" \
-            -map 0:v:0 -map 1:a:0 \
+          # ড্রপবক্স থেকে ভিডিও নিয়ে রিয়েল-টাইমে ইউটিউব সার্ভারে পুশ করা হচ্ছে
+          ffmpeg -re -i "$DROPBOX_VIDEO_URL" \
             -c:v copy -c:a aac -b:a 128k -ar 44100 \
             -f flv -flvflags no_duration_filesize \
             "rtmp://a.rtmp.youtube.com/live2/$MY_STREAM_KEY" || echo "⚠️ FFmpeg exited."
           
-          sleep 5
+          echo "Video finished or connection dropped. Re-connecting in $RETRY_DELAY seconds..."
+          sleep $RETRY_DELAY
         done
