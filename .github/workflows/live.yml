@@ -1,0 +1,52 @@
+name: 24/7 YouTube to YouTube Live
+
+on:
+  schedule:
+    - cron: '50 */5 * * *' # প্রতি ৫ ঘণ্টা ৫০ মিনিট পর পর অটো-রিস্টার্ট হবে
+  workflow_dispatch: # ম্যানুয়ালি চালু করার বাটন
+
+jobs:
+  live_stream:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install FFmpeg and yt-dlp
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+        sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
+        sudo chmod a+rx /usr/local/bin/yt-dlp
+
+    - name: Start Live Stream
+      env:
+        SOURCE_YOUTUBE_URL: "https://www.youtube.com/watch?v=kSUjZBv5wXg"
+        MY_STREAM_KEY: ${{ secrets.MY_STREAM_KEY }}
+      run: |
+        echo "Starting stable and resilient 24/7 live stream..."
+        
+        RETRY_DELAY=10
+        while true; do
+          # আপনার দূরদর্শী সাজেশন অনুযায়ী ফলব্যাক এবং এরর দমন (stderr redirection) যোগ করা হলো
+          VIDEO_URL=$(yt-dlp -g -f "bestvideo[ext=mp4]/bestvideo" "$SOURCE_YOUTUBE_URL" 2>/dev/null)
+          AUDIO_URL=$(yt-dlp -g -f "bestaudio[ext=m4a]/bestaudio" "$SOURCE_YOUTUBE_URL" 2>/dev/null)
+          
+          if [ -z "$VIDEO_URL" ] || [ -z "$AUDIO_URL" ]; then
+            echo "Failed to fetch stream URLs. Retrying in $RETRY_DELAY seconds..."
+            sleep $RETRY_DELAY
+            continue
+          fi
+          
+          echo "Starting ffmpeg with separate Video and Audio inputs via explicit mapping..."
+          ffmpeg -re -i "$VIDEO_URL" -re -i "$AUDIO_URL" \
+            -map 0:v:0 -map 1:a:0 \
+            -c:v copy -c:a aac -b:a 128k -ar 44100 \
+            -f flv -flvflags no_duration_filesize \
+            "rtmp://a.rtmp.youtube.com/live2/$MY_STREAM_KEY" || true
+          
+          echo "Stream disconnected. Retrying in $RETRY_DELAY seconds..."
+          sleep $RETRY_DELAY
+          [ $RETRY_DELAY -lt 60 ] && RETRY_DELAY=$((RETRY_DELAY + 10))
+        done
